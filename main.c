@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +22,7 @@ typedef struct {
 
 } partition_t ;
 
-chs_t parseChs(uint8_t* source){
+chs_t parseChs(const uint8_t* source){
     chs_t result;
     result.head = source[0];
     result.sector = source[1] & 0b00111111;
@@ -32,7 +33,7 @@ chs_t parseChs(uint8_t* source){
     return result;
 }
 
-uint32_t parseNum_sectors(uint8_t* source){
+uint32_t parseNum_sectors(const uint8_t* source){
     uint32_t result;
     result = source[3];
     result = result << 8;
@@ -59,16 +60,14 @@ partition_t parsePartition(uint8_t* source){
     return result;
 }
 
-void getPartAddr(FILE *fp){
+uint32_t getPartAddr(int fd){
     const int BLOCK_SIZE = 512;
     uint8_t mbr[BLOCK_SIZE];
-    int read_check = fread(mbr, BLOCK_SIZE, 1, fp);
-    if(read_check != 1){
-        printf("Read not enough bytes from drive %d\n", read_check);
+    ssize_t read_check = read(fd, mbr, BLOCK_SIZE);
+    if(read_check != BLOCK_SIZE){
+        printf("Read not enough bytes from drive %zd\n", read_check);
         exit(EXIT_FAILURE);
     }
-
-
     const int PARTITION_TABLE_START = 440 //code
             + 4 //disk signature
             + 2 //nulls
@@ -76,6 +75,12 @@ void getPartAddr(FILE *fp){
     partition_t part = parsePartition(&mbr[PARTITION_TABLE_START]);
     uint32_t address = part.lba * BLOCK_SIZE;
     printf("LBA partition 1 : %#010x\n", address);
+    return address;
+}
+
+void readSuperBlock(int fd, int off){
+    lseek(fd, off, SEEK_SET);
+
 }
 
 void help(const char *name){
@@ -84,6 +89,7 @@ void help(const char *name){
 
 
 int main(int argc, char *argv[]) {
+    // get file name
     int opt;
     char *drive_name = "/dev/sdb";
     while ((opt = getopt(argc, argv, "d:h")) != -1) {
@@ -103,12 +109,18 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "To many arguments after options\n");
         exit(EXIT_FAILURE);
     }
+    // open file
     printf("opening device %s\n", drive_name);
-    FILE *drive_fp = fopen(drive_name, "rb");
-    if(drive_fp == NULL){
+    int drive_fd = open(drive_name, O_RDONLY);
+    if(drive_fd < 0){
         printf("Failed to open drive '%s': %s (errno=%d)\n", drive_name, strerror(errno), errno);
     }
-    getPartAddr(drive_fp);
+
+    // get partition address
+    uint32_t part_address = getPartAddr(drive_fd);
+
+
+
     return EXIT_SUCCESS;
 }
 
