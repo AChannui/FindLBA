@@ -5,3 +5,5 @@ set(CMAKE_C_STANDARD 11)
 
 add_executable(Assignment2 main.c)
 
+target_link_libraries(Assignment2 PUBLIC m)
+
