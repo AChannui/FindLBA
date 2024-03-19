@@ -1,7 +1,7 @@
-#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -87,7 +87,7 @@ uint32_t getPartAddr(int fd) {
     return address;
 }
 
-void readSuperBlock(int fd, off_t off) {
+super_block_t readSuperBlock(int fd, off_t off) {
     const int BLOCK_SIZE = 4096;
     uint8_t buff[BLOCK_SIZE];
     lseek(fd, off, SEEK_SET);
@@ -101,6 +101,42 @@ void readSuperBlock(int fd, off_t off) {
     printf("Size of block : %d\n", super_block.block_size);
     printf("Total number of blocks : %d\n", super_block.blocks);
     printf("Total number of inodes : %d\n", super_block.inodes);
+    return super_block;
+}
+
+int check_indirect(const unsigned char block[]){
+    int consecutive = 0;
+    uint32_t last_numb = 0;
+    const uint32_t * indirects = (const uint32_t*) (block);
+    for(int i = 0; i < 32; i++){
+        const uint32_t current_numb = indirects[i];
+        if(last_numb+1 == current_numb){
+            consecutive++;
+        }
+        else{
+            consecutive = 0;
+        }
+        if(consecutive > 4){
+            return 1;
+        }
+        last_numb = current_numb;
+    }
+    return 0;
+}
+
+
+void count_indirects(const super_block_t super_block, int fd, off_t off){
+    int indirect_count = 0;
+    lseek(fd, off, SEEK_SET);
+    for(int current_block = 0; current_block < super_block.blocks; current_block++){
+        unsigned char buff[super_block.block_size];
+        read(fd, buff, super_block.block_size);
+        if(check_indirect(buff)){
+            printf("current block: %d\n", current_block);
+            indirect_count++;
+        }
+    }
+    printf("Total indirect blocks: %d\n", indirect_count);
 }
 
 void help(const char *name) {
@@ -138,7 +174,11 @@ int main(int argc, char *argv[]) {
 
     // get partition address
     uint32_t part_address = getPartAddr(drive_fd);
-    readSuperBlock(drive_fd, part_address + 1024);
+    super_block_t super_block = readSuperBlock(drive_fd, part_address + 1024);
+    count_indirects(super_block, drive_fd, part_address);
+
+
+    close(drive_fd);
     return EXIT_SUCCESS;
 }
 
