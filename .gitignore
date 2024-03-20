@@ -1,2 +1,9 @@
 cmake-build-*/
 .idea/
+
+*.png
+*.rtf
+
+.*.sw*
+*~
+.DS_Store
