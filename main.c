@@ -104,19 +104,18 @@ super_block_t readSuperBlock(int fd, off_t off) {
     return super_block;
 }
 
-int check_indirect(const unsigned char block[]){
+int check_indirect(const unsigned char block[]) {
     int consecutive = 0;
     uint32_t last_numb = 0;
-    const uint32_t * indirects = (const uint32_t*) (block);
-    for(int i = 0; i < 32; i++){
+    const uint32_t *indirects = (const uint32_t *) (block);
+    for (int i = 0; i < 32; i++) {
         const uint32_t current_numb = indirects[i];
-        if(last_numb+1 == current_numb){
+        if (last_numb + 1 == current_numb) {
             consecutive++;
-        }
-        else{
+        } else {
             consecutive = 0;
         }
-        if(consecutive > 4){
+        if (consecutive > 4) {
             return 1;
         }
         last_numb = current_numb;
@@ -125,14 +124,14 @@ int check_indirect(const unsigned char block[]){
 }
 
 
-void count_indirects(const super_block_t super_block, int fd, off_t off, int print_indirects){
+void count_indirects(const super_block_t super_block, int fd, off_t off, int print_indirects) {
     int indirect_count = 0;
     lseek(fd, off, SEEK_SET);
-    for(int current_block = 0; current_block < super_block.blocks; current_block++){
+    for (int current_block = 0; current_block < super_block.blocks; current_block++) {
         unsigned char buff[super_block.block_size];
         read(fd, buff, super_block.block_size);
-        if(check_indirect(buff)){
-            if(print_indirects){
+        if (check_indirect(buff)) {
+            if (print_indirects) {
                 printf("current block: %d\n", current_block);
             }
             indirect_count++;
