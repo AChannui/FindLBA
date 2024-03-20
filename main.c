@@ -125,14 +125,16 @@ int check_indirect(const unsigned char block[]){
 }
 
 
-void count_indirects(const super_block_t super_block, int fd, off_t off){
+void count_indirects(const super_block_t super_block, int fd, off_t off, int print_indirects){
     int indirect_count = 0;
     lseek(fd, off, SEEK_SET);
     for(int current_block = 0; current_block < super_block.blocks; current_block++){
         unsigned char buff[super_block.block_size];
         read(fd, buff, super_block.block_size);
         if(check_indirect(buff)){
-            printf("current block: %d\n", current_block);
+            if(print_indirects){
+                printf("current block: %d\n", current_block);
+            }
             indirect_count++;
         }
     }
@@ -140,7 +142,10 @@ void count_indirects(const super_block_t super_block, int fd, off_t off){
 }
 
 void help(const char *name) {
-    fprintf(stderr, "Usage: %s [-d device] [-h]\n", name);
+    fprintf(stderr, "Usage: %s [options]\n", name);
+    fprintf(stderr, "   -h          print this help");
+    fprintf(stderr, "   -v          verbose (print indirect block numbers)");
+    fprintf(stderr, "   -d dev      device to read");
 }
 
 
@@ -148,7 +153,8 @@ int main(int argc, char *argv[]) {
     // get file name
     int opt;
     char *drive_name = "/dev/sdb";
-    while ((opt = getopt(argc, argv, "d:h")) != -1) {
+    int print_debug = 0;
+    while ((opt = getopt(argc, argv, "d:hv")) != -1) {
         switch (opt) {
             case 'd':
                 drive_name = optarg;
@@ -156,6 +162,9 @@ int main(int argc, char *argv[]) {
             case 'h':
                 help(argv[0]);
                 exit(EXIT_SUCCESS);
+            case 'v':
+                print_debug = 1;
+                break;
             default: /* '?' */
                 help(argv[0]);
                 exit(EXIT_FAILURE);
@@ -175,7 +184,7 @@ int main(int argc, char *argv[]) {
     // get partition address
     uint32_t part_address = getPartAddr(drive_fd);
     super_block_t super_block = readSuperBlock(drive_fd, part_address + 1024);
-    count_indirects(super_block, drive_fd, part_address);
+    count_indirects(super_block, drive_fd, part_address, print_debug);
 
 
     close(drive_fd);
