@@ -17,7 +17,8 @@ mount: disk.img
 	sudo losetup --partscan --find --show disk.img
 	mkdir -p mnt
 	sudo mount /dev/loop0p1 mnt
-	sudo chmod a+w mnt
+	sudo chmod a+rwx mnt
+	sudo chmod a+rw /dev/loop0*
 
 .PHONY: unmount
 unmount: 
