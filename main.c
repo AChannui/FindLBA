@@ -19,7 +19,6 @@ typedef struct {
     chs_t end_chs;
     uint32_t lba;
     uint32_t num_sectors;
-
 } partition_t;
 
 typedef struct {
@@ -104,12 +103,22 @@ super_block_t readSuperBlock(int fd, off_t off) {
     return super_block;
 }
 
-int check_indirect(const unsigned char block[]) {
+int check_indirect(const unsigned char block[], unsigned int block_size, unsigned int total_blocks, int current_block) {
     int consecutive = 0;
     uint32_t last_numb = 0;
+    int index;
+
     const uint32_t *indirects = (const uint32_t *) (block);
-    for (int i = 0; i < 32; i++) {
-        const uint32_t current_numb = indirects[i];
+    unsigned int indirects_size = block_size / sizeof(indirects[0]);
+
+    for (index = 0; index < 32; index++) {
+        const uint32_t current_numb = indirects[index];
+        if (current_numb == 0) {
+            break;
+        }
+        if (current_numb >= total_blocks) {
+            return 0;
+        }
         if (last_numb + 1 == current_numb) {
             consecutive++;
         } else {
@@ -118,21 +127,51 @@ int check_indirect(const unsigned char block[]) {
         if (consecutive > 4) {
             return 1;
         }
+
         last_numb = current_numb;
     }
-    return 0;
+    // assuming the first address in the indirect blocks address is right after current block address
+    if (current_block != 0 && indirects[0] != current_block + 1) {
+        return 0;
+    }
+    if (index == 32) {
+        return 0;
+    }
+    // need at least one valid address in indirect
+    if (index == 0) {
+        return 0;
+    }
+    for (; index < indirects_size; index++) {
+        // all addresses after first 0 must be 0s
+        if (indirects[index] != 0) {
+            return 0;
+        }
+    }
+    return 2;
 }
 
 
-void count_indirects(const super_block_t super_block, int fd, off_t off, int print_indirects) {
+void count_indirects(const super_block_t super_block, int fd, off_t off, int print_indirects, int ensure_address,
+                     long block_break) {
     int indirect_count = 0;
     lseek(fd, off, SEEK_SET);
     for (int current_block = 0; current_block < super_block.blocks; current_block++) {
         unsigned char buff[super_block.block_size];
+        if (block_break == current_block) {
+            printf("reached block: %d\n", current_block);
+        }
         read(fd, buff, super_block.block_size);
-        if (check_indirect(buff)) {
+        const int tmp = check_indirect(buff, super_block.block_size, super_block.blocks,
+                                       ensure_address ? current_block : 0);
+
+        if (tmp) {
             if (print_indirects) {
-                printf("current block: %d\n", current_block);
+                printf("current block: %d", current_block);
+            }
+            if (tmp == 2) {
+                printf(", fake block\n");
+            } else {
+                printf("\n");
             }
             indirect_count++;
         }
@@ -142,9 +181,10 @@ void count_indirects(const super_block_t super_block, int fd, off_t off, int pri
 
 void help(const char *name) {
     fprintf(stderr, "Usage: %s [options]\n", name);
-    fprintf(stderr, "   -h          print this help");
-    fprintf(stderr, "   -v          verbose (print indirect block numbers)");
-    fprintf(stderr, "   -d dev      device to read");
+    fprintf(stderr, "   -h          print this help\n");
+    fprintf(stderr, "   -v          verbose (print indirect block numbers)\n");
+    fprintf(stderr, "   -d dev      device to read\n");
+    fprintf(stderr, "   -n          ensure first address in block is after current block\n");
 }
 
 
@@ -153,16 +193,24 @@ int main(int argc, char *argv[]) {
     int opt;
     char *drive_name = "/dev/sdb";
     int print_debug = 0;
-    while ((opt = getopt(argc, argv, "d:hv")) != -1) {
+    int ensure_address = 0;
+    long block_break = -1;
+    while ((opt = getopt(argc, argv, "d:hvnb:")) != -1) {
         switch (opt) {
             case 'd':
                 drive_name = optarg;
                 break;
-            case 'h':
+            case 'h': // print help
                 help(argv[0]);
                 exit(EXIT_SUCCESS);
-            case 'v':
+            case 'v': // print out debug printfs
                 print_debug = 1;
+                break;
+            case 'n': // when checking for fake small indirect blocks assume first address in block is right after current block
+                ensure_address = 1;
+                break;
+            case 'b': // when checking for fake small indirect blocks assume first address in block is right after current block
+                block_break = strtol(optarg, NULL, 0);
                 break;
             default: /* '?' */
                 help(argv[0]);
@@ -183,7 +231,7 @@ int main(int argc, char *argv[]) {
     // get partition address
     uint32_t part_address = getPartAddr(drive_fd);
     super_block_t super_block = readSuperBlock(drive_fd, part_address + 1024);
-    count_indirects(super_block, drive_fd, part_address, print_debug);
+    count_indirects(super_block, drive_fd, part_address, print_debug, ensure_address, block_break);
 
 
     close(drive_fd);
