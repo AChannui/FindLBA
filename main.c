@@ -103,7 +103,8 @@ super_block_t readSuperBlock(int fd, off_t off) {
     return super_block;
 }
 
-int check_indirect(const unsigned char block[], const unsigned int block_size, unsigned int total_blocks, int current_block) {
+int check_indirect(const unsigned char block[], const unsigned int block_size, unsigned int total_blocks,
+                   int current_block) {
     int consecutive = 0;
     uint32_t last_numb = 0;
     int index;
@@ -150,17 +151,17 @@ int check_indirect(const unsigned char block[], const unsigned int block_size, u
     return 2;
 }
 
-int check_start(const unsigned char block[], const ssize_t  buff_size){
+int check_start(const unsigned char block[], const ssize_t buff_size) {
     int header_size = 12;
-    if(buff_size < header_size){
+    if (buff_size < header_size) {
         return 0;
     }
     // start of riff
-    if(memcmp(&block[0], "RIFF", 4) != 0){
+    if (memcmp(&block[0], "RIFF", 4) != 0) {
         return 0;
     }
 
-    if(memcmp(&block[8], "WEBP", 4) != 0){
+    if (memcmp(&block[8], "WEBP", 4) != 0) {
         return 0;
     }
     return 1;
@@ -191,7 +192,8 @@ void check_part(const super_block_t super_block, int fd, off_t off, int print_in
             }
             indirect_count++;
         }
-        if(check_start(buff, bytes_read)){
+
+        if (check_start(buff, bytes_read)) {
             start_count++;
             printf("start block: %d\n", current_block);
         }
