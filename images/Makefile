@@ -33,5 +33,9 @@ debugfs: disk.img
 	/usr/sbin/debugfs /dev/loop0p1
 	make unmount
 
+image.webp:
+	convert -size 800x800 canvas:white $@
+
 clean: 
 	rm -f file* disk*.img
+
