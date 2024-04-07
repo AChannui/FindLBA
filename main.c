@@ -103,7 +103,7 @@ super_block_t readSuperBlock(int fd, off_t off) {
     return super_block;
 }
 
-int check_indirect(const unsigned char block[], unsigned int block_size, unsigned int total_blocks, int current_block) {
+int check_indirect(const unsigned char block[], const unsigned int block_size, unsigned int total_blocks, int current_block) {
     int consecutive = 0;
     uint32_t last_numb = 0;
     int index;
@@ -150,9 +150,25 @@ int check_indirect(const unsigned char block[], unsigned int block_size, unsigne
     return 2;
 }
 
+int check_start(const unsigned char block[], const ssize_t  buff_size){
+    int header_size = 12;
+    if(buff_size < header_size){
+        return 0;
+    }
+    // start of riff
+    if(memcmp(&block[0], "RIFF", 4) != 0){
+        return 0;
+    }
 
-void count_indirects(const super_block_t super_block, int fd, off_t off, int print_indirects, int ensure_address,
-                     long block_break) {
+    if(memcmp(&block[8], "WEBP", 4) != 0){
+        return 0;
+    }
+    return 1;
+}
+
+void check_part(const super_block_t super_block, int fd, off_t off, int print_indirects, int ensure_address,
+                long block_break) {
+    int start_count = 0;
     int indirect_count = 0;
     lseek(fd, off, SEEK_SET);
     for (int current_block = 0; current_block < super_block.blocks; current_block++) {
@@ -160,13 +176,13 @@ void count_indirects(const super_block_t super_block, int fd, off_t off, int pri
         if (block_break == current_block) {
             printf("reached block: %d\n", current_block);
         }
-        read(fd, buff, super_block.block_size);
+        const ssize_t bytes_read = read(fd, buff, super_block.block_size);
         const int tmp = check_indirect(buff, super_block.block_size, super_block.blocks,
                                        ensure_address ? current_block : 0);
 
         if (tmp) {
             if (print_indirects) {
-                printf("current block: %d", current_block);
+                printf("indirect block: %d", current_block);
             }
             if (tmp == 2) {
                 printf(", fake block\n");
@@ -175,8 +191,14 @@ void count_indirects(const super_block_t super_block, int fd, off_t off, int pri
             }
             indirect_count++;
         }
+        if(check_start(buff, bytes_read)){
+            start_count++;
+            printf("start block: %d\n", current_block);
+        }
     }
+    printf("Total start blocks: %d\n", start_count);
     printf("Total indirect blocks: %d\n", indirect_count);
+
 }
 
 void help(const char *name) {
@@ -231,7 +253,7 @@ int main(int argc, char *argv[]) {
     // get partition address
     uint32_t part_address = getPartAddr(drive_fd);
     super_block_t super_block = readSuperBlock(drive_fd, part_address + 1024);
-    count_indirects(super_block, drive_fd, part_address, print_debug, ensure_address, block_break);
+    check_part(super_block, drive_fd, part_address, print_debug, ensure_address, block_break);
 
 
     close(drive_fd);
