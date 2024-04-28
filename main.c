@@ -151,11 +151,7 @@ int check_indirect(const unsigned char block[], const unsigned int block_size, u
     return 2;
 }
 
-int check_start(const unsigned char block[], const ssize_t buff_size) {
-    int header_size = 12;
-    if (buff_size < header_size) {
-        return 0;
-    }
+int check_start(const unsigned char block[]) {
     // start of riff
     if (memcmp(&block[0], "RIFF", 4) != 0) {
         return 0;
@@ -168,9 +164,7 @@ int check_start(const unsigned char block[], const ssize_t buff_size) {
 }
 
 void check_part(const super_block_t super_block, int fd, off_t off, int print_indirects, int ensure_address,
-                long block_break) {
-    int start_count = 0;
-    int indirect_count = 0;
+                long block_break, int indirect_list[], int *indirect_count, int start_block[], int *start_count) {
     lseek(fd, off, SEEK_SET);
     for (int current_block = 0; current_block < super_block.blocks; current_block++) {
         unsigned char buff[super_block.block_size];
@@ -190,16 +184,138 @@ void check_part(const super_block_t super_block, int fd, off_t off, int print_in
             } else {
                 printf("\n");
             }
-            indirect_count++;
+            indirect_list[*indirect_count] = current_block;
+            *indirect_count += 1;
         }
 
-        if (check_start(buff, bytes_read)) {
-            start_count++;
+        if (check_start(buff)) {
             printf("start block: %d\n", current_block);
+            start_block[*start_count] = current_block;
+            *start_count += 1;
         }
     }
-    printf("Total start blocks: %d\n", start_count);
-    printf("Total indirect blocks: %d\n", indirect_count);
+    printf("Total start blocks: %d\n", *start_count);
+    printf("Total indirect blocks: %d\n", *indirect_count);
+
+}
+
+void read_block(int fd, uint32_t block_number, uint32_t block_size, off_t part_off, unsigned char buff[]) {
+    off_t off = part_off + (block_size * block_number);
+    lseek(fd, off, SEEK_SET);
+    read(fd, buff, block_size);
+}
+
+// takes buffer and size of file left and writes back
+int write_buff(int fd, const unsigned char buff[], uint32_t *file_left,const uint32_t block_size) {
+    if (*file_left < block_size) {
+        write(fd, buff, *file_left);
+        *file_left = 0;
+        return 0; // end of file
+    } else {
+        write(fd, buff, block_size);
+        *file_left -= block_size;
+        return (int) block_size; // bytes written
+    }
+
+}
+
+void write_first_indirect(int drive_fd, int file_fd, const uint32_t block_numb, uint32_t *file_left,
+                          const uint32_t block_size, off_t off, uint32_t *current_block) {
+    unsigned char indirect_block[block_size];
+    read_block(drive_fd, block_numb, block_size, off, indirect_block);
+    const uint32_t *indirects = (const uint32_t *) (indirect_block);
+    // 1024 addresses in indirect block
+    for (int i = 0; i < 1024; i++) {
+        *current_block = indirects[i];
+        unsigned char buff[block_size];
+        read_block(drive_fd, *current_block, block_size, off, buff);
+        if (write_buff(file_fd, buff, file_left, block_size) == 0) {
+            return;
+        }
+    }
+}
+
+
+void recover_file(int drive_fd, int file_fd, const int indirect_list[], const int indirect_count,
+                  const int start_block[], const int start_count, off_t off, const uint32_t block_size) {
+
+    // read first 12 blocks
+    // first block
+    uint32_t current_block = start_block[0];
+    unsigned char first_block[block_size];
+    read_block(drive_fd, current_block, block_size, off, first_block);
+    uint32_t file_left = *(uint32_t *) (&first_block[4]); // save off size of file
+    file_left += 8; // file size excludes first 8 bytes
+    // if file is smaller than 1 block case
+    if (write_buff(file_fd, first_block, &file_left, block_size) == 0) {
+        return;
+    }
+
+    for (int i = 0; i < 11; i++) {
+        current_block++;
+        unsigned char buff[block_size];
+        read_block(drive_fd, current_block, block_size, off, buff);
+        if (write_buff(file_fd, buff, &file_left, block_size) == 0) {
+            return;
+        }
+    }
+
+
+    int indirect_block_number = 0;
+    // first indirect block
+    for (int i = 0; i < indirect_count; i++) {
+        int current_indirect = indirect_list[i];
+        unsigned char buff[block_size];
+        read_block(drive_fd, current_indirect, block_size, off, buff);
+        uint32_t first_block_number = *(uint32_t *) (&buff[0]);
+        if (first_block_number == current_block + 1) {
+            indirect_block_number = current_indirect;
+            break;
+        }
+    }
+
+    if (indirect_block_number == 0) {
+        printf("failed to find first indirect block\n");
+        exit(EXIT_FAILURE);
+    }
+
+    unsigned char indirect_block[block_size];
+    read_block(drive_fd, indirect_block_number, block_size, off, indirect_block);
+    uint32_t *indirects = (uint32_t *) (indirect_block);
+    // 1024 addresses in indirect block
+    for (int i = 0; i < 1024; i++) {
+        current_block = indirects[i];
+        unsigned char buff[block_size];
+        read_block(drive_fd, current_block, block_size, off, buff);
+        if (write_buff(file_fd, buff, &file_left, block_size) == 0) {
+            return;
+        }
+    }
+
+    // second indirect block
+    for (int i = 0; i < indirect_count; i++) {
+        int current_indirect = indirect_list[i];
+        unsigned char second_buff[block_size];
+        read_block(drive_fd, current_indirect, block_size, off, second_buff);
+        uint32_t first_indirect_check = *(uint32_t *) (&second_buff[0]);
+        unsigned char first_buff[block_size];
+        read_block(drive_fd, first_indirect_check, block_size, off, first_buff);
+        uint32_t first_block_number = *(uint32_t *) (&first_buff[0]);
+        if (first_block_number == current_block + 1) {
+            indirect_block_number = current_indirect;
+            break;
+        }
+    }
+
+    read_block(drive_fd, indirect_block_number, block_size, off, indirect_block);
+    indirects = (uint32_t *) (indirect_block);
+    for(int i = 0; i < 1024; i++){
+        write_first_indirect(drive_fd, file_fd, indirects[i], &file_left, block_size, off, &current_block);
+    }
+
+    if(file_left == 0){
+        return;
+    }
 
 }
 
@@ -255,10 +371,34 @@ int main(int argc, char *argv[]) {
     // get partition address
     uint32_t part_address = getPartAddr(drive_fd);
     super_block_t super_block = readSuperBlock(drive_fd, part_address + 1024);
-    check_part(super_block, drive_fd, part_address, print_debug, ensure_address, block_break);
 
+    int indirect_block_list[4096]; // assuming that there are no more than 1024 indirect blocks
+    memset(indirect_block_list, 0, 4096);
+    int indirect_block_count = 0;
+    int start_block[1024];
+    memset(indirect_block_list, 0, 1024);
+    int start_block_count = 0;
+
+    check_part(super_block, drive_fd, part_address, print_debug, ensure_address, block_break,
+               indirect_block_list, &indirect_block_count, start_block, &start_block_count);
+
+    fflush(stdout);
+
+
+    char image_name[] = "recovered_image.webp";
+    int image_fd = open(image_name, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    if (image_fd < 0) {
+        printf("Failed to open '%s': %s (errno=%d)\n", image_name, strerror(errno), errno);
+        exit(EXIT_FAILURE);
+    }
+
+
+    recover_file(drive_fd, image_fd, indirect_block_list, indirect_block_count, start_block,
+                 start_block_count, part_address, super_block.block_size);
+    printf("did it\n");
 
     close(drive_fd);
+    close(image_fd);
     return EXIT_SUCCESS;
 }
 
